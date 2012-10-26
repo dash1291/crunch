@@ -9,20 +9,43 @@ class CrunchHttp():
         self.request = request
         uri_opts = self.parse_uri()
         if not uri_opts == None:
-            self.process_opts(uri_opts)
+            result = self.process_opts(uri_opts)
+            if result == False:
+                self.write_response('Not found.', 404)
+        else:
+            self.write_response('Not found.', 404)
         
-    def write_response(self, response):
+    def build_headers(self, headers, status_code):
+        if status_code == 200:
+            status = '200 OK'
+        elif status_code == 404:
+            status = '404 NOT FOUND'
+        else:
+            status = '200 OK'
+
+        header_string = 'HTTP/1.1 {0}\r\n'.format(status)
+        for key in headers.keys():
+            header_string = header_string + (
+                '{0}: {1}\r\n'.format(key, headers[key]))
+        return header_string
+
+    def write_response(self, response, status_code=200):
         request = self.request
-        request.write("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s" % (
-                     len(response), response))
+        headers = {}
+        headers['Content-Length'] = len(response)
+        headers_str = self.build_headers(headers, status_code)
+        request.write(headers_str + '\r\n{0}'.format(response))
         request.finish()
 
     def process_opts(self, uri_opts):
-        content = ''
+        found = False
+        print uri_opts
         for crunchlet in self.crunchpool.values():
-            #if crunchlet.name == uri_opts['node_name']:
-            content = crunchlet.fetch(uri_opts['resource_name'], self) 
-        return content
+            if crunchlet.uid == uri_opts['node_name']:
+                found = True
+                content = crunchlet.fetch(uri_opts['resource_name'], self)
+
+        return found
 
     def parse_uri(self):
         uri = self.uri
