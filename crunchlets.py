@@ -60,12 +60,25 @@ class CrunchLet():
         self.http_queue = {}
 
     def handle_connection(self):
+        self.recv(self.dispatch_commands)
+
+    def send(self, string, callback):
+        print '>> ' + string
+        self.stream.write(string + self.delimiter, callback)
+
+    def recv(self, callback):
         while self.stream.reading() == True:
             continue
-        self.stream.read_until(self.delimiter, self.dispatch_commands)
+
+        def onread(data):
+            data = data.replace(self.delimiter, '')
+            print '<< '  + data
+            callback(data)
+
+        self.stream.read_until(self.delimiter, onread)
 
     def send_error(errmsg):
-        self.stream.write('ERROR ' + errmsg)
+        self.send('ERROR ' + errmsg)
 
     def dispatch_commands(self, received):
         cmd, args = self.parse_command(received)
@@ -79,18 +92,21 @@ class CrunchLet():
             ts = args[0]
             content = args[1]
             self.process_request(ts, content)
-        self.handle_connection()
 
     def process_request(self, ts, content):
         if ts in self.http_queue:
-            http_queue[ts].write_response(content)
+            self.http_queue[ts].write_response(content)
 
     def parse_command(self, data):
         tokens = data.split(' ')
         return (tokens[0], tokens[1:])
 
     def fetch(self, resource, http_response):
+        def onfetch():
+            self.handle_connection()
+
         ts = str(time.time()).replace('.', '')
         self.http_queue[ts] = http_response
-        self.stream.write('FETCH ' + str(time.time()).replace('.', '') + (
-            resource))
+        self.send(
+            'FETCH %s %s' % (str(time.time()).replace('.', ''), resource),
+            onfetch)

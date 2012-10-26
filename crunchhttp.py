@@ -8,17 +8,17 @@ class CrunchHttp():
         self.uri = request.uri
         self.request = request
         uri_opts = self.parse_uri()
-        self.process_opts(uri_opts)
+        if not uri_opts == None:
+            self.process_opts(uri_opts)
         
     def write_response(self, response):
         request = self.request
         request.write("HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s" % (
-                     len(message), message))
+                     len(response), response))
         request.finish()
 
     def process_opts(self, uri_opts):
         content = ''
-        print self.crunchpool
         for crunchlet in self.crunchpool.values():
             #if crunchlet.name == uri_opts['node_name']:
             content = crunchlet.fetch(uri_opts['resource_name'], self) 
@@ -32,5 +32,5 @@ class CrunchHttp():
             args['node_name'] = re_match.group(1)
             args['resource_name'] = re_match.group(2)
         except:
-            raise Exception('Insufficient URI')
+            return None
         return args
