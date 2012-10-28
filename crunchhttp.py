@@ -11,9 +11,9 @@ class CrunchHttp():
         if not uri_opts == None:
             result = self.process_opts(uri_opts)
             if result == False:
-                self.write_response('Not found.', 404)
+                self.write_response('Not found.', 404, True)
         else:
-            self.write_response('Not found.', 404)
+            self.write_response('Not found.', 404, True)
         
     def build_headers(self, headers, status_code):
         if status_code == 200:
@@ -29,12 +29,14 @@ class CrunchHttp():
                 '{0}: {1}\r\n'.format(key, headers[key]))
         return header_string
 
-    def write_response(self, response, status_code=200):
+    def write_response(self, response, status_code=200, build_headers=False):
         request = self.request
-        headers = {}
-        headers['Content-Length'] = len(response)
-        headers_str = self.build_headers(headers, status_code)
-        request.write(headers_str + '\r\n{0}'.format(response))
+        if build_headers == True:
+            headers = {}
+            headers['Content-Length'] = len(response)
+            headers_str = self.build_headers(headers, status_code)
+            response = headers_str + '\r\n{0}'.format(response)
+        request.write(response)
         request.finish()
 
     def process_opts(self, uri_opts):
