@@ -1,3 +1,4 @@
+import datetime
 import errno
 import functools
 import re
@@ -7,12 +8,12 @@ import time
 from tornado import ioloop, iostream
 
 def init_crunch(crunchpool):
-    def connection_ready(sock, fd, events):
+    def connection_ready(sock, io_loop, fd, events):
         while True:
             try:
                 connection, address = sock.accept()
                 stream = iostream.IOStream(connection)
-                crunchlet = CrunchLet(stream, address)
+                crunchlet = CrunchLet(io_loop, stream, address)
                 crunchpool[str(address)] = crunchlet
             except socket.error, e:
                 if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
@@ -28,7 +29,7 @@ def init_crunch(crunchpool):
     sock.listen(128)
 
     io_loop = ioloop.IOLoop.instance()
-    callback = functools.partial(connection_ready, sock)
+    callback = functools.partial(connection_ready, sock, io_loop)
     io_loop.add_handler(sock.fileno(), callback, io_loop.READ)
     io_loop.start()
 
@@ -53,15 +54,34 @@ CONTENT timestamp data  ->
 
 """
 class CrunchLet():
-    def __init__(self, stream, address):
+    def __init__(self, io_loop, stream, address):
+        self.io_loop = io_loop
         self.stream = stream
         self.address = address
         self.delimiter = '\r\n\r\n'
         self.http_queue = {}
         self.uid = None
+        self.timeout = None
+        self.schedule_ping()
 
     def handle_connection(self):
         self.recv(self.dispatch_commands)
+        self.schedule_ping()
+
+    def schedule_ping(self):
+        if not self.timeout == None:
+            self.io_loop.remove_timeout(self.timeout)
+        
+        self.timeout = self.io_loop.add_timeout(datetime.timedelta(minutes=3), self.send_ping)
+
+    def recv_ping(self):
+        def onpingrecv(data):
+            self.schedule_ping()
+
+        self.recv(onpingrecv)
+        
+    def send_ping(self):
+        self.send('PING', self.recv_ping)
 
     def send(self, string, callback=None):
         print '>> ' + string

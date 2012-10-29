@@ -43,6 +43,8 @@ def process_commands(data):
 
     elif cmd == 'FETCH':
         on_fetch(args)
+    elif cmd == 'PING':
+        send_data('PONG', read_command)
 
     else:
         read_command()
