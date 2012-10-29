@@ -62,7 +62,6 @@ class CrunchLet():
         self.http_queue = {}
         self.uid = None
         self.timeout = None
-        self.schedule_ping()
 
     def handle_connection(self):
         self.recv(self.dispatch_commands)
@@ -71,17 +70,11 @@ class CrunchLet():
     def schedule_ping(self):
         if not self.timeout == None:
             self.io_loop.remove_timeout(self.timeout)
-        
-        self.timeout = self.io_loop.add_timeout(datetime.timedelta(minutes=3), self.send_ping)
 
-    def recv_ping(self):
-        def onpingrecv(data):
-            self.schedule_ping()
+        def send_ping():
+            self.send('PING')
 
-        self.recv(onpingrecv)
-        
-    def send_ping(self):
-        self.send('PING', self.recv_ping)
+        self.timeout = self.io_loop.add_timeout(datetime.timedelta(minutes=2), send_ping)
 
     def send(self, string, callback=None):
         print '>> ' + string
@@ -118,6 +111,9 @@ class CrunchLet():
                 ts = args[0]
                 content = ' '.join(args[1:])
                 self.process_request(ts, content)
+
+        elif cmd == 'PONG':
+            self.handle_connection()
 
     def process_request(self, ts, content):
         if ts in self.http_queue:
