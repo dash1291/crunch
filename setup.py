@@ -6,4 +6,5 @@ setup(
     packages=['crunch',],
     license='BSD',
     long_description=open('README.rst').read(),
+    install_requires=['tornado',],
 )
