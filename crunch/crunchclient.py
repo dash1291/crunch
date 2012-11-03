@@ -71,7 +71,13 @@ def on_fetch(args):
     response = 'CONTENT {0} {1}'.format(ts, response_content.encode('base64'))
     send_data(response, read_command)
 
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-stream = iostream.IOStream(s)
-stream.connect(('localhost', 8890), authenticate)
-ioloop.IOLoop.instance().start()
+def start_client(config):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
+    stream = iostream.IOStream(s)
+    stream.connect((config['address'], config['port']), authenticate)
+    ioloop.IOLoop.instance().start()
+
+if __name__ == '__main__':
+    config = {'port': 8890,
+              'address': 'localhost'}
+    start_client(config)

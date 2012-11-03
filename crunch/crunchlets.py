@@ -7,7 +7,7 @@ import time
 
 from tornado import ioloop, iostream
 
-def init_crunch(crunchpool):
+def init_crunch(crunchpool, crunch_port=8890):
     def connection_ready(sock, io_loop, fd, events):
         while True:
             try:
@@ -25,7 +25,7 @@ def init_crunch(crunchpool):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.setblocking(0)
-    sock.bind(("", 8890))
+    sock.bind(("", crunch_port))
     sock.listen(128)
 
     io_loop = ioloop.IOLoop.instance()
