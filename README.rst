@@ -14,3 +14,36 @@ Structure
 ---------
 
 The server and client both are implemented using awesome tools like Tornado. The server runs an HTTP receiver on one thread and the crunch receiver on the other thread, both of which are non-blocking.
+
+Usage
+-----
+
+Running the server
+##################
+
+::
+
+	from crunch.server import runserver
+
+	# This is the port for accepting incoming HTTP requests. Your choice
+	http_port = 80
+
+	# This is the port for accepting incoming connections from crunch clients.
+	# Again your choice
+	crunch_port = 8080
+	
+	runserver(http_port, crunch_port)
+
+Running the client
+##################
+
+::
+
+	from crunch.crunchclient import start_client
+
+	config = {
+		'port': 8080,	# this the crunch port your server runs on
+		'address': 'localhost'	# this is the address of the server
+	}
+
+	start_client(config)
