@@ -3,6 +3,7 @@ import socket
 from tornado import ioloop, iostream
 
 delimiter = '\r\n\r\n'
+stream = None
 
 def recv_data(callback):
     while stream.reading() == True:
@@ -45,6 +46,8 @@ def process_commands(data):
         on_fetch(args)
     elif cmd == 'PING':
         send_data('PONG', read_command)
+    elif cmd == 'DISCONNECT':
+        stream.close()
 
     else:
         read_command()
@@ -72,6 +75,7 @@ def on_fetch(args):
     send_data(response, read_command)
 
 def start_client(config):
+    global stream
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
     stream = iostream.IOStream(s)
     stream.connect((config['address'], config['port']), authenticate)

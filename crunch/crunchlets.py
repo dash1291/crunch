@@ -13,7 +13,7 @@ def init_crunch(crunchpool, crunch_port=8890):
             try:
                 connection, address = sock.accept()
                 stream = iostream.IOStream(connection)
-                crunchlet = CrunchLet(io_loop, stream, address)
+                crunchlet = CrunchLet(io_loop, stream, address, crunchpool)
                 crunchpool[str(address)] = crunchlet
             except socket.error, e:
                 if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
@@ -22,6 +22,7 @@ def init_crunch(crunchpool, crunch_port=8890):
             connection.setblocking(0)
             crunchlet.handle_connection()
 
+        
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.setblocking(0)
@@ -53,8 +54,8 @@ Content Retrieval
 CONTENT timestamp data  -> 
 
 """
-class CrunchLet():
-    def __init__(self, io_loop, stream, address):
+class CrunchLet(object):
+    def __init__(self, io_loop, stream, address, crunchpool):
         self.io_loop = io_loop
         self.stream = stream
         self.address = address
@@ -62,19 +63,45 @@ class CrunchLet():
         self.http_queue = {}
         self.uid = None
         self.timeout = None
+        self.crunchpool = crunchpool
+
+    def disconnect(self):
+        if not self.timeout == None:
+            self.io_loop.remove_timeout(self.timeout)
+
+        if self.stream.closed() == False:
+            self.send('DICONNECT')
+
+        self.stream.close()
+        self.crunchpool.pop(str(self.address))
+
+    def identify(self, uid, password):
+        crunchpool = self.crunchpool
+        for address in crunchpool.keys():
+            if crunchpool[address].uid == uid and not(
+                crunchpool[address] is self):
+                crunchpool[address].disconnect()
+        return True
 
     def handle_connection(self):
         self.recv(self.dispatch_commands)
         self.schedule_ping()
+
+    def closed(self):
+        return self.stream.closed()
 
     def schedule_ping(self):
         if not self.timeout == None:
             self.io_loop.remove_timeout(self.timeout)
 
         def send_ping():
-            self.send('PING')
+            try:
+                self.send('PING')
+            except:
+                self.disconnect()
+                return
 
-        self.timeout = self.io_loop.add_timeout(datetime.timedelta(minutes=2), send_ping)
+        self.timeout = self.io_loop.add_timeout(datetime.timedelta(seconds=30), send_ping)
 
     def send(self, string, callback=None):
         print '>> ' + string
@@ -102,7 +129,10 @@ class CrunchLet():
                 self.send_error('Need arguments to IDENT')
             self.uid = args[0]
             passwd = args[1]
-            self.send('ACK', self.handle_connection)
+            if self.identify(self.uid, passwd) == True:
+                self.send('ACK', self.handle_connection)
+            else:
+                self.send('IDENTFAIILED', self.disconnect)
 
         elif cmd == 'CONTENT':
             if self.uid == None:
