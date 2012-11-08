@@ -4,6 +4,7 @@ from tornado import ioloop, iostream
 
 delimiter = '\r\n\r\n'
 stream = None
+config = None
 
 def recv_data(callback):
     while stream.reading() == True:
@@ -53,7 +54,7 @@ def process_commands(data):
         read_command()
 
 def authenticate():
-    send_data('IDENT ashish locker', read_command)
+    send_data('IDENT {0} {1}'.format(config['username'], config['password']), read_command)
 
 def read_command():
     recv_data(process_commands)
@@ -74,8 +75,10 @@ def on_fetch(args):
     response = 'CONTENT {0} {1}'.format(ts, response_content.encode('base64'))
     send_data(response, read_command)
 
-def start_client(config):
+def start_client(conf):
     global stream
+    global config
+    config = conf
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
     stream = iostream.IOStream(s)
     stream.connect((config['address'], config['port']), authenticate)
