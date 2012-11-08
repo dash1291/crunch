@@ -7,6 +7,8 @@ import time
 
 from tornado import ioloop, iostream
 
+from crunchauth import authenticate
+
 def init_crunch(crunchpool, crunch_port=8890):
     def connection_ready(sock, io_loop, fd, events):
         while True:
@@ -81,6 +83,10 @@ class CrunchLet(object):
             if crunchpool[address].uid == uid and not(
                 crunchpool[address] is self):
                 crunchpool[address].disconnect()
+
+        if authenticate(uid, password) == False:
+            return False
+            
         return True
 
     def handle_connection(self):
@@ -148,6 +154,7 @@ class CrunchLet(object):
     def process_request(self, ts, content):
         if ts in self.http_queue:
             self.http_queue[ts].write_response(content.decode('base64'), 200)
+            self.http_queue.pop(ts)
 
     def parse_command(self, data):
         tokens = data.split(' ')
