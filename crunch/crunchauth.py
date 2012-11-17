@@ -1,7 +1,8 @@
 import hashlib
 import sqlite3
 
-conn = sqlite3.connect('crunch.db')
+DATABASE = 'crunch.db'
+conn = sqlite3.connect(DATABASE)
 c = conn.cursor()
 
 def create_schema():
@@ -57,3 +58,7 @@ def authenticate(username, password):
 			return False
 	except:
 		return False
+
+def delete_account(username):
+	q = 'DELETE FROM users WHERE user_name=?'
+	c.execute(q, (username,))
