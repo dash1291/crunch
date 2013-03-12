@@ -7,9 +7,11 @@ import time
 
 from tornado import ioloop, iostream
 
-from crunch.auth import authenticate
+from crunch.auth import SqliteDB
 
-def init_crunch(crunchpool, crunch_port=8890):
+database = None
+
+def init_crunch(crunchpool, crunch_port=8890, database_path = 'crunch.db'):
     def connection_ready(sock, io_loop, fd, events):
         while True:
             try:
@@ -35,6 +37,9 @@ def init_crunch(crunchpool, crunch_port=8890):
     callback = functools.partial(connection_ready, sock, io_loop)
     io_loop.add_handler(sock.fileno(), callback, io_loop.READ)
     io_loop.start()
+
+    # Setup database interface
+    database = SqliteDB(database_path)
 
 
 """
@@ -84,7 +89,7 @@ class CrunchLet(object):
                 crunchpool[address] is self):
                 crunchpool[address].disconnect()
 
-        if authenticate(uid, password) == False:
+        if database.authenticate(uid, password) == False:
             return False
 
         return True
