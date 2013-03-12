@@ -1,45 +1,8 @@
 import datetime
-import errno
-import functools
 import re
-import socket
 import time
 
 from tornado import ioloop, iostream
-
-from crunch.auth import SqliteDB
-
-database = None
-
-def init_crunch(crunchpool, crunch_port=8890, database_path = 'crunch.db'):
-    def connection_ready(sock, io_loop, fd, events):
-        while True:
-            try:
-                connection, address = sock.accept()
-                stream = iostream.IOStream(connection)
-                crunchlet = CrunchLet(io_loop, stream, address, crunchpool)
-                crunchpool[str(address)] = crunchlet
-            except socket.error, e:
-                if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
-                    raise
-                return
-            connection.setblocking(0)
-            crunchlet.handle_connection()
-
-        
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setblocking(0)
-    sock.bind(("", crunch_port))
-    sock.listen(128)
-
-    io_loop = ioloop.IOLoop.instance()
-    callback = functools.partial(connection_ready, sock, io_loop)
-    io_loop.add_handler(sock.fileno(), callback, io_loop.READ)
-    io_loop.start()
-
-    # Setup database interface
-    database = SqliteDB(database_path)
 
 
 """
@@ -62,15 +25,16 @@ CONTENT timestamp data  ->
 
 """
 class CrunchLet(object):
-    def __init__(self, io_loop, stream, address, crunchpool):
-        self.io_loop = io_loop
+    def __init__(self, env, stream, address):
+        self.io_loop = env['ioloop']
+        self.crunchpool = env['crunchpool']
+
         self.stream = stream
         self.address = address
         self.delimiter = '\r\n\r\n'
         self.http_queue = {}
         self.uid = None
         self.timeout = None
-        self.crunchpool = crunchpool
 
     def disconnect(self):
         if not self.timeout == None:
@@ -154,9 +118,6 @@ class CrunchLet(object):
                 ts = args[0]
                 content = ' '.join(args[1:])
                 self.process_request(ts, content, )
-
-        elif cmd == 'HEADERS':
-            #
 
         elif cmd == 'PONG':
             self.handle_connection()
