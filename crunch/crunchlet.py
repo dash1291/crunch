@@ -7,7 +7,7 @@ import time
 
 from tornado import ioloop, iostream
 
-from crunchauth import authenticate
+from crunch.auth import authenticate
 
 def init_crunch(crunchpool, crunch_port=8890):
     def connection_ready(sock, io_loop, fd, events):
@@ -86,7 +86,7 @@ class CrunchLet(object):
 
         if authenticate(uid, password) == False:
             return False
-            
+
         return True
 
     def handle_connection(self):
@@ -107,7 +107,8 @@ class CrunchLet(object):
                 self.disconnect()
                 return
 
-        self.timeout = self.io_loop.add_timeout(datetime.timedelta(seconds=30), send_ping)
+        self.timeout = self.io_loop.add_timeout(
+            datetime.timedelta(seconds=30), send_ping)
 
     def send(self, string, callback=None):
         print '>> ' + string
@@ -135,6 +136,7 @@ class CrunchLet(object):
                 self.send_error('Need arguments to IDENT')
             self.uid = args[0]
             passwd = args[1]
+            
             if self.identify(self.uid, passwd) == True:
                 self.send('ACK', self.handle_connection)
             else:
@@ -146,7 +148,10 @@ class CrunchLet(object):
             else:
                 ts = args[0]
                 content = ' '.join(args[1:])
-                self.process_request(ts, content)
+                self.process_request(ts, content, )
+
+        elif cmd == 'HEADERS':
+            #
 
         elif cmd == 'PONG':
             self.handle_connection()
@@ -166,6 +171,5 @@ class CrunchLet(object):
 
         ts = str(time.time()).replace('.', '')
         self.http_queue[ts] = http_response
-        self.send(
-            'FETCH {0} {1}'.format(str(time.time()).replace('.', ''), resource),
-            onfetch)
+        self.send('FETCH {0} {1}'.format(str(time.time()).replace('.', ''),
+            resource), onfetch)

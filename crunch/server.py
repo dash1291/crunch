@@ -2,8 +2,8 @@ import thread
 
 from tornado import httpserver, ioloop
 
-from crunchhttp import CrunchHttp
-from crunchlets import init_crunch
+from crunch.http import CrunchHttp
+from crunch.crunchlet import init_crunch
 
 crunchpool = {}
 
