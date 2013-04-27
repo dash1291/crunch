@@ -1,55 +1,58 @@
-import thread
+import pdb
 import functools
 import socket
 import errno
 
-from tornado import httpserver, ioloop
+from gevent import socket, spawn
+from gevent.pool import Group
+from gevent.pywsgi import WSGIServer
+from gevent.server import StreamServer
 
+from crunch.auth import SqliteDB
 from crunch.http import CrunchHttp
-from crunch.crunchlet import init_crunch
+from crunch.crunchlet import Crunchlet, CrunchStream
 
+
+global_group = Group()
 crunchpool = {}
 
-def init_crunch(crunchpool, crunch_port=8890, database_path = 'crunch.db'):
-    def connection_ready(sock, io_loop, fd, events):
-        while True:
-            try:
-                connection, address = sock.accept()
-                stream = iostream.IOStream(connection)
-                crunchlet = CrunchLet(env, stream, address)
-                crunchpool[str(address)] = crunchlet
-            except socket.error, e:
-                if e.args[0] not in (errno.EWOULDBLOCK, errno.EAGAIN):
-                    raise
-                return
-            connection.setblocking(0)
-            crunchlet.handle_connection()
+def init_crunch(crunchpool, crunch_port=8890, database_path='crunch.db'):
+    def connection_ready(sock, address):
+        stream = CrunchStream(sock)
+        crunchlet = Crunchlet(env, stream, address)
+        crunchlet.start()
+        crunchpool[str(address[0])] = crunchlet
+        global_group.add(crunchlet)
+        global_group.join()
 
     # Setup database interface
-    database = SqliteDB(database_path)
+    database = SqliteDB('/Users/ashish/repos/crunch/crunch/crunch.db')
 
     # Prepare an env dict
-    env['database'] = database
-    env['crunchpool'] = crunchpool
-    env['ioloop'] = io_loop
+    env = {
+        'database': database,
+        'crunchpool': crunchpool,
+    }
 
     # Create socket and IO loop
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setblocking(0)
-    sock.bind(("", crunch_port))
-    sock.listen(128)
+    server = StreamServer(('0.0.0.0', crunch_port), connection_ready)
+    server.serve_forever()
 
-    io_loop = ioloop.IOLoop.instance()
-    callback = functools.partial(connection_ready, sock, io_loop)
-    io_loop.add_handler(sock.fileno(), callback, io_loop.READ)
-    io_loop.start()
+def init_http_server(http_port):
+    return
+
+def request_handler(environ, start_response):
+    c_pool = CrunchHttp(crunchpool)
+    #global_group.add(c_pool)
+    #global_group.join()
+
+    return c_pool.handle_request(environ, start_response)
 
 def runserver(http_port=8888, crunch_port=8890):
-	thread.start_new(init_crunch, (crunchpool, crunch_port))
-	http_server = httpserver.HTTPServer(CrunchHttp(crunchpool).handle_request)
-	http_server.listen(http_port)
-	ioloop.IOLoop.instance().start()
+    spawn(init_crunch, crunchpool, crunch_port)
+
+    http_server = WSGIServer(('0.0.0.0', http_port), request_handler)
+    http_server.serve_forever()
 
 if __name__ == '__main__':
 	runserver()

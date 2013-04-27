@@ -1,13 +1,18 @@
+import functools
+import logging
 import socket
 import threading
+import time
 
 from tornado import ioloop, iostream
 
-delimiter = '\r\n\r\n'
+logging.basicConfig(level=logging.DEBUG)
+
+delimiter = '\r\n'
 stream = None
 config = None
 request_pool = []
-
+io_loop = None
 
 class RequestConveyor(threading.Thread):
     """Thread that does rotation of requests in the request pool.
@@ -15,7 +20,8 @@ class RequestConveyor(threading.Thread):
     Response for each request is written to the stream one piece (i.e. of
     length given by STREAM_LENGTH) at a time."""
 
-    def __init__(self, request_pool, stream, stream_length=32):
+    def __init__(self, stream, request_pool, stream_length=4096*16):
+        threading.Thread.__init__(self)
         self.request_pool = request_pool
         self.stream = stream
         self.stream_length = stream_length
@@ -25,36 +31,35 @@ class RequestConveyor(threading.Thread):
 
         while True:
             for request in self.request_pool:
+                finished = False
                 ts = request['ts']
                 response_content = request['response']
 
                 # write data into the stream one piece at a time
-                if len(response_content) > 3:
+                if len(response_content) >= STREAM_LENGTH:
                     resp_stream = response_content[:STREAM_LENGTH]
                     response_content = response_content[STREAM_LENGTH:]
                 else:
-                    resp_stream = response_content[:len(response_content)]
+                    resp_stream = response_content
                     response_content = ''
-                    self.request_pool
+                    self.request_pool.remove(request)
+                    finished = True
 
-                response = 'CONTENT {0} {1}'.format(ts, resp_stream)
-                send_data(response, read_command)
+                request['response'] = response_content
+                response = 'CONTENT {0} {1}{2}{3}'.format(
+                    ts, len(resp_stream), delimiter, resp_stream)
 
+                globals()['send_data'](response)
+                #globals()['io_loop'].add_callback(callback)
 
+                if finished == True:
+                    fin = 'FINISH {0}'.format(ts)
+                    #callback = functools.partial(send_data, fin)
+                    globals()['send_data'](fin)
 
-def recv_data(callback, bytes = None):
-    if stream.closed():
-        return False
+    def stop(self):
+        self.quit = True
 
-    while stream.reading() == True:
-        continue
-
-    def onrecv(data):
-        data = data.replace(delimiter, '')
-        print '<< ' + data
-        callback(data)
-
-    stream.read_until(delimiter, onrecv)
 
 def build_headers(headers, status_code=200):
     if status_code == 200:
@@ -71,37 +76,21 @@ def build_headers(headers, status_code=200):
 
     return header_string
 
-def send_data(data, callback):
-    if stream.closed():
-        return False
+def send_data(content):
+    while stream.writing() == True:
+        continue
 
-    print '>> '  + data
-    stream.write(data + delimiter, callback)
+    stream.write(content + delimiter)
 
-def process_commands(data):
-    tokens = data.split(' ')
-    cmd = tokens[0]
-    args = tokens[1:]
+def on_unrecognized(cmd):
+    logging.info('Unrecognized command. %s' % cmd)
 
-    if cmd == 'ACK':
-        read_command()
+def on_ack():
+    logging.info('Incoming ACK.')
 
-    elif cmd == 'FETCH':
-        on_fetch(args)
-    elif cmd == 'PING':
-        send_data('PONG', read_command)
-    elif cmd == 'DISCONNECT':
-        stream.close()
-
-    else:
-        read_command()
-
-def authenticate():
-    send_data('IDENT {0} {1}'.format(config['username'], config['password']),
-        read_command)
-
-def read_command():
-    recv_data(process_commands)
+def on_ping():
+    logging.info('Incoming PING. Sending sPONG.')
+    stream.write('PONG')
 
 def on_fetch(args):
     """Handles a new incoming content request.
@@ -112,6 +101,8 @@ def on_fetch(args):
     ts = args[0]
     resource = args[1]
 
+    logging.info('Request received %s' % resource)
+
     # also wrap the response data into the request pool.
     try:
         content = open(resource).read()
@@ -121,29 +112,74 @@ def on_fetch(args):
         status_code = 404
 
     headers = {}
-    headers['Content-Length'] = len(content)
+    #headers['Content-Length'] = len(content)
     headers_str = build_headers(headers, status_code)
-    response_content = headers_str + '\r\n{0}'.format(content)
+    #response_content = headers_str + '\r\n{0}'.format(content)
+    response_content = content
+    request_pool.append({'response': response_content, 'ts': ts})
 
-    request_pool.append({'id': request_id, 'response': 
-        response_content.encode('base64'), 'ts': ts})
+def authenticate():
+    stream.write('IDENT {0} {1}{2}'.format(config['username'],
+        config['password'], delimiter), read_next_command)
+
+def process_commands(data):
+    tokens = data.replace(delimiter, '').split(' ')
+    cmd = tokens[0]
+    args = tokens[1:]
+
+    if cmd == 'ACK':
+        on_ack()
+
+    elif cmd == 'FETCH':
+        on_fetch(args)
+
+    elif cmd == 'PING':
+        on_ping()
+
+    elif cmd == 'DISCONNECT':
+        on_disconnect()
+
+    else:
+        on_unrecognized(cmd)
+
+def read_next_command():
+    if stream.closed():
+        logging.error('Stream closed while reading command line.')
+        return False
+
+    # wait while buffer is being read
+    while stream.reading() == True:
+        continue
+    
+    def onrecv(data):
+        process_commands(data)
+        read_next_command()
+
+    stream.read_until(delimiter, onrecv)
 
 def start_client(conf):
     global stream
     global config
-    config = conf
+    global io_loop
 
-    # Create a RequestConveyor instance
-    rc = RequestConveyor(stream, http_pool)
-    rc.start()
+    config = conf
 
     # Initialize the IOLoop
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
     stream = iostream.IOStream(s)
-    stream.connect((config['address'], config['port']), authenticate)
-    ioloop.IOLoop.instance().start()
+    stream.connect((conf['address'], conf['port']), authenticate)
+
+    # Create a RequestConveyor instance
+    rc = RequestConveyor(stream, globals()['request_pool'])
+    rc.daemon = True
+    rc.start()
+
+    io_loop = ioloop.IOLoop.instance()
+    io_loop.start()
 
 if __name__ == '__main__':
     config = {'port': 8890,
-              'address': 'localhost'}
+              'address': 'localhost',
+              'username': 'dash1291',
+              'password': 'locker'}
     start_client(config)

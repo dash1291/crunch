@@ -1,8 +1,12 @@
 import datetime
+import functools
+import logging
 import re
 import time
 
-from tornado import ioloop, iostream
+from gevent import Greenlet
+
+logging.basicConfig(level=logging.DEBUG)
 
 
 """
@@ -24,17 +28,23 @@ Content Retrieval
 CONTENT timestamp data  -> 
 
 """
-class CrunchLet(object):
+class Crunchlet(Greenlet):
     def __init__(self, env, stream, address):
-        self.io_loop = env['ioloop']
+        Greenlet.__init__(self)
+
         self.crunchpool = env['crunchpool']
+        self.database = env['database']
 
         self.stream = stream
         self.address = address
-        self.delimiter = '\r\n\r\n'
+        self.delimiter = '\r\n'
         self.http_queue = {}
         self.uid = None
         self.timeout = None
+
+    def _run(self):
+        while True:
+            self.read_next_command()
 
     def disconnect(self):
         if not self.timeout == None:
@@ -53,14 +63,19 @@ class CrunchLet(object):
                 crunchpool[address] is self):
                 crunchpool[address].disconnect()
 
-        if database.authenticate(uid, password) == False:
+        if self.database.authenticate(uid, password) == False:
             return False
 
         return True
 
-    def handle_connection(self):
-        self.recv(self.dispatch_commands)
-        self.schedule_ping()
+    def read_next_command(self):
+        if self.stream.closed():
+            logging.error('Stream closed while reading command line.')
+            return False
+
+        cmd_line = self.stream.read_until(self.delimiter)
+        self.process_commands(cmd_line)
+        #self.schedule_ping()
 
     def closed(self):
         return self.stream.closed()
@@ -79,63 +94,110 @@ class CrunchLet(object):
         self.timeout = self.io_loop.add_timeout(
             datetime.timedelta(seconds=30), send_ping)
 
-    def send(self, string, callback=None):
+    def send(self, string):
         print '>> ' + string
-        self.stream.write(string + self.delimiter, callback)
+        self.stream.write(string + self.delimiter)
 
-    def recv(self, callback=None):
-        while self.stream.reading() == True:
-            continue
+    def on_content(self, args):
+        ts = args[0]
+        length = args[1]
 
-        def onread(data):
-            data = data.replace(self.delimiter, '')
-            print '<< '  + data
-            if not callback == None:
-                callback(data)
+        if self.uid == None:
+                self.send_error('Not authenticated.')
+        else:
+            callback = functools.partial(self.process_request, ts)
+            print length
+            bytes = self.stream.read_bytes(int(length) + len(self.delimiter))
+            self.process_request(ts, bytes)
 
-        self.stream.read_until(self.delimiter, onread)
+    def on_ident(self, args):
+        if len(args) < 2:
+            self.send_error('Need arguments to IDENT')
+        
+        self.uid = args[0]
+        passwd = args[1]
+        if self.identify(self.uid, passwd) == True:
+            logging.info('Auth complete. Sending ACK.')
+            self.send('ACK')
+        else:
+            logging.info('Failed authentication.')
+            self.send('IDENTFAIILED')
 
     def send_error(errmsg):
-        self.send('ERROR ' + errmsg, self.handle_connection)
+        logging.info(errmsg)
+        self.send('ERROR ' + errmsg)
 
-    def dispatch_commands(self, received):
-        cmd, args = self.parse_command(received)
+    def process_commands(self, data):
+        tokens = data.replace(self.delimiter, '').split(' ')
+        cmd = tokens[0]
+        args = tokens[1:]
+        
         if cmd == 'IDENT':
-            if len(args) < 2:
-                self.send_error('Need arguments to IDENT')
-            self.uid = args[0]
-            passwd = args[1]
-            
-            if self.identify(self.uid, passwd) == True:
-                self.send('ACK', self.handle_connection)
-            else:
-                self.send('IDENTFAIILED', self.disconnect)
+            self.on_ident(args)
 
         elif cmd == 'CONTENT':
-            if self.uid == None:
-                self.send_error('Not authenticated.')
-            else:
-                ts = args[0]
-                content = ' '.join(args[1:])
-                self.process_request(ts, content, )
+            self.on_content(args)
 
         elif cmd == 'PONG':
-            self.handle_connection()
+            logging.info('Received PONG.')
+
+        elif cmd == 'FINISH':
+            logging.info(args[0])
+            self.finish_request(args[0])
 
     def process_request(self, ts, content):
+        """Write the streamed data into an HTTP request."""
+        #content = content.replace(self.delimiter, '')
         if ts in self.http_queue:
-            self.http_queue[ts].write_response(content.decode('base64'), 200)
-            self.http_queue.pop(ts)
+            self.http_queue[ts].write_response(content, 200)
 
-    def parse_command(self, data):
-        tokens = data.split(' ')
-        return (tokens[0], tokens[1:])
+    def finish_request(self, ts):
+        """Finish streaming response to an HTTP request."""
+        if ts in self.http_queue:
+            self.http_queue[ts].finish()
 
-    def fetch(self, resource, http_response):
-        def onfetch():
-            self.handle_connection()
-
+    def send_fetch(self, resource, http_response):
+        """Fetch content for an HTTP request from serving node."""
         ts = str(time.time()).replace('.', '')
         self.http_queue[ts] = http_response
+        logging.info('sending fetch' + resource)
         self.send('FETCH {0} {1}'.format(str(time.time()).replace('.', ''),
-            resource), onfetch)
+            resource))
+
+
+class CrunchStream(object):
+    def __init__(self, socket):
+        self.socket = socket
+        self.buffer = ''
+
+    def write(self, data):
+        self.socket.send(data)
+
+    def push_to_buffer(self, bytes):
+        self.buffer += bytes
+
+    def read_until(self, delimiter):
+        while True:
+            bytes = self.socket.recv(1024)
+            self.buffer += bytes
+
+            if delimiter in self.buffer:
+                ind = self.buffer.index(delimiter)
+                ret_val = self.buffer[:ind]
+                self.buffer = self.buffer[ind+len(delimiter):]
+                return ret_val
+
+    def closed(self):
+        return False 
+
+    def read_bytes(self, num_bytes):
+        n_bytes = len(self.buffer)
+        while True:
+            if n_bytes >= num_bytes:
+                ret_val = self.buffer[:num_bytes]
+                self.buffer = self.buffer[num_bytes:]
+                return ret_val
+
+            bytes = self.socket.recv(1024)
+            self.buffer += bytes
+            n_bytes += len(bytes)
