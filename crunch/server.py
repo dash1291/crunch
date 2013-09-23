@@ -22,7 +22,7 @@ def init_crunch(crunchpool, crunch_port=8890, database_path='crunch.db'):
         stream = CrunchStream(sock)
         crunchlet = Crunchlet(env, stream, address)
         crunchlet.start()
-        crunchpool[str(address[0])] = crunchlet
+        crunchpool[str(address[0]) + ':' + str(address[1])] = crunchlet
 
     # Setup database interface
     database = SqliteDB(os.path.join(os.path.dirname(__file__), 'crunch.db'))
