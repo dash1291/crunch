@@ -1,10 +1,8 @@
-import datetime
 import logging
 import time
 
 import gevent
-from gevent import Greenlet, Timeout
-
+from gevent import Greenlet
 
 """
 Crunch Protocol
@@ -37,13 +35,10 @@ class Crunchlet(Greenlet):
         self.delimiter = '\r\n'
         self.http_queue = {}
         self.uid = None
-        self.timeout = None
 
     def _run(self):
         while True:
-            #with Timeout(3, False) as timeout:
             self.read_next_command()
-            #    timeout.
             gevent.sleep(0)
 
     def disconnect(self):
@@ -75,27 +70,20 @@ class Crunchlet(Greenlet):
 
         print 'reading command'
         cmd_line = self.stream.read_until(self.delimiter)
+
+        if not cmd_line:
+            self.kill()
+
         print 'finished reading command'
-        self.process_commands(cmd_line)
+        return self.process_commands(cmd_line)
 
     def closed(self):
         return self.stream.closed()
 
-    def schedule_ping(self):
-        if not self.timeout == None:
-            self.io_loop.remove_timeout(self.timeout)
-
-        def send_ping():
-            try:
-                self.send('PING')
-            except:
-                self.disconnect()
-                return
-
-        self.timeout = self.io_loop.add_timeout(
-            datetime.timedelta(seconds=30), send_ping)
-
     def send(self, string):
+        if self.ping_timeout:
+            self.ping_timeout.cancel()
+
         print '>> ' + string
         self.stream.write(string + self.delimiter)
 
@@ -129,6 +117,7 @@ class Crunchlet(Greenlet):
         self.send('ERROR ' + errmsg)
 
     def process_commands(self, data):
+        self.idle = False
         tokens = data.replace(self.delimiter, '').split(' ')
         cmd = tokens[0]
         args = tokens[1:]
@@ -146,6 +135,9 @@ class Crunchlet(Greenlet):
         elif cmd == 'FINISH':
             logging.info(args[0])
             self.finish_request(args[0])
+
+        self.idle = True
+        return cmd
 
     def process_request(self, ts, content):
         """Write the streamed data into an HTTP request."""
@@ -188,6 +180,10 @@ class CrunchStream(object):
                 return ret_val
 
             bytes = self.socket.recv(1024)
+
+            if not bytes:
+                return None
+
             self.buffer += bytes
 
     def closed(self):
@@ -202,5 +198,9 @@ class CrunchStream(object):
                 return ret_val
 
             bytes = self.socket.recv(1024)
+
+            if not bytes:
+                return None
+
             self.buffer += bytes
             n_bytes += len(bytes)
