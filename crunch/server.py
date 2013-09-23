@@ -1,12 +1,12 @@
-import pdb
-import functools
-import socket
-import errno
+import os.path
+import sys
 
-from gevent import socket, spawn
+import gevent
 from gevent.pool import Group
 from gevent.pywsgi import WSGIServer
 from gevent.server import StreamServer
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from crunch.auth import SqliteDB
 from crunch.http import CrunchHttp
@@ -17,16 +17,15 @@ global_group = Group()
 crunchpool = {}
 
 def init_crunch(crunchpool, crunch_port=8890, database_path='crunch.db'):
+    print 'crunch init'
     def connection_ready(sock, address):
         stream = CrunchStream(sock)
         crunchlet = Crunchlet(env, stream, address)
         crunchlet.start()
         crunchpool[str(address[0])] = crunchlet
-        global_group.add(crunchlet)
-        global_group.join()
 
     # Setup database interface
-    database = SqliteDB('/Users/ashish/repos/crunch/crunch/crunch.db')
+    database = SqliteDB(os.path.join(os.path.dirname(__file__), 'crunch.db'))
 
     # Prepare an env dict
     env = {
@@ -38,21 +37,21 @@ def init_crunch(crunchpool, crunch_port=8890, database_path='crunch.db'):
     server = StreamServer(('0.0.0.0', crunch_port), connection_ready)
     server.serve_forever()
 
-def init_http_server(http_port):
-    return
 
 def request_handler(environ, start_response):
     c_pool = CrunchHttp(crunchpool)
-    #global_group.add(c_pool)
-    #global_group.join()
-
     return c_pool.handle_request(environ, start_response)
 
-def runserver(http_port=8888, crunch_port=8890):
-    spawn(init_crunch, crunchpool, crunch_port)
 
+def init_http_server(http_port=8888, crunch_port=8890):
+    print 'web initialized'
     http_server = WSGIServer(('0.0.0.0', http_port), request_handler)
     http_server.serve_forever()
 
+
+def runserver(http_port=8888, crunch_port=8890):
+    gevent.joinall([gevent.spawn(init_http_server), gevent.spawn(init_crunch, crunchpool)])
+
+
 if __name__ == '__main__':
-	runserver()
+    runserver()

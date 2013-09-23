@@ -1,12 +1,9 @@
 import datetime
-import functools
 import logging
-import re
 import time
 
-from gevent import Greenlet
-
-logging.basicConfig(level=logging.DEBUG)
+import gevent
+from gevent import Greenlet, Timeout
 
 
 """
@@ -16,16 +13,16 @@ Handshake
 ---------
 
 Client          Server
-Connection  ->  
+Connection  ->
             <-  INIT
-IDENT       ->  
+IDENT       ->
             <-  ACK
 
 Content Retrieval
 -----------------
 
                         <-  FETCH timestamp resource
-CONTENT timestamp data  -> 
+CONTENT timestamp data  ->
 
 """
 class Crunchlet(Greenlet):
@@ -44,7 +41,10 @@ class Crunchlet(Greenlet):
 
     def _run(self):
         while True:
+            #with Timeout(3, False) as timeout:
             self.read_next_command()
+            #    timeout.
+            gevent.sleep(0)
 
     def disconnect(self):
         if not self.timeout == None:
@@ -73,9 +73,10 @@ class Crunchlet(Greenlet):
             logging.error('Stream closed while reading command line.')
             return False
 
+        print 'reading command'
         cmd_line = self.stream.read_until(self.delimiter)
+        print 'finished reading command'
         self.process_commands(cmd_line)
-        #self.schedule_ping()
 
     def closed(self):
         return self.stream.closed()
@@ -105,15 +106,15 @@ class Crunchlet(Greenlet):
         if self.uid == None:
                 self.send_error('Not authenticated.')
         else:
-            callback = functools.partial(self.process_request, ts)
-            print length
+            print 'reading bytes'
             bytes = self.stream.read_bytes(int(length) + len(self.delimiter))
-            self.process_request(ts, bytes)
+            self.process_request(ts, bytes[:-2])
+            print 'finished reading bytes'
 
     def on_ident(self, args):
         if len(args) < 2:
             self.send_error('Need arguments to IDENT')
-        
+
         self.uid = args[0]
         passwd = args[1]
         if self.identify(self.uid, passwd) == True:
@@ -123,7 +124,7 @@ class Crunchlet(Greenlet):
             logging.info('Failed authentication.')
             self.send('IDENTFAIILED')
 
-    def send_error(errmsg):
+    def send_error(self, errmsg):
         logging.info(errmsg)
         self.send('ERROR ' + errmsg)
 
@@ -131,7 +132,8 @@ class Crunchlet(Greenlet):
         tokens = data.replace(self.delimiter, '').split(' ')
         cmd = tokens[0]
         args = tokens[1:]
-        
+
+        print cmd
         if cmd == 'IDENT':
             self.on_ident(args)
 
@@ -148,6 +150,7 @@ class Crunchlet(Greenlet):
     def process_request(self, ts, content):
         """Write the streamed data into an HTTP request."""
         #content = content.replace(self.delimiter, '')
+        #print content
         if ts in self.http_queue:
             self.http_queue[ts].write_response(content, 200)
 
@@ -178,17 +181,17 @@ class CrunchStream(object):
 
     def read_until(self, delimiter):
         while True:
-            bytes = self.socket.recv(1024)
-            self.buffer += bytes
-
             if delimiter in self.buffer:
                 ind = self.buffer.index(delimiter)
                 ret_val = self.buffer[:ind]
-                self.buffer = self.buffer[ind+len(delimiter):]
+                self.buffer = self.buffer[ind + len(delimiter):]
                 return ret_val
 
+            bytes = self.socket.recv(1024)
+            self.buffer += bytes
+
     def closed(self):
-        return False 
+        return False
 
     def read_bytes(self, num_bytes):
         n_bytes = len(self.buffer)

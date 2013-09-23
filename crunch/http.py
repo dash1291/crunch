@@ -1,7 +1,7 @@
 import re
 
-from gevent import Greenlet
 from gevent.event import AsyncResult
+
 
 class CrunchHttp():
     def __init__(self, crunchpool):
@@ -10,7 +10,7 @@ class CrunchHttp():
         self.response_headers = AsyncResult()
         self.crunchpool = crunchpool
         self._finished = False
-        
+
     """WSGI handler."""
     def handle_request(self, environ, start_response):
         self.uri = environ['PATH_INFO']
@@ -26,13 +26,13 @@ class CrunchHttp():
             #self.write_response('Not found.', 404, True)
             status = '404 Not Found'
 
-        headers = [('content-type', 'image/jpeg'),]
+        headers = []
         start_response(status, headers)
 
         while self._finished == False:
             yield self.async_response.get()
             self.async_response = AsyncResult()
-        
+
     def build_headers(self, headers, status_code):
         if status_code == 200:
             status = '200 OK'
@@ -45,14 +45,14 @@ class CrunchHttp():
         for key in headers.keys():
             header_string = header_string + (
                 '{0}: {1}\r\n'.format(key, headers[key]))
-            
+
         return header_string
 
     def write_headers(self, headers):
         self.response_headers.set(headers)
 
         headers_str = self.build_headers(headers)
-        self.request.write(header_str)
+        self.request.write(headers_str)
 
     def write_response(self, response, status_code=200, build_headers=False):
         self.response_buffer = response
@@ -63,18 +63,17 @@ class CrunchHttp():
             headers_str = self.build_headers(headers, status_code)
             response = headers_str + '\r\n{0}'.format(response)
 
-        #request.write(response)
-
     def finish(self):
+        self.async_response.set('')
         self._finished = True
 
     def process_opts(self, uri_opts):
         found = False
+
         for crunchlet in self.crunchpool.values():
             if crunchlet.uid == uri_opts['node_name']:
                 found = True
-                content = crunchlet.send_fetch(uri_opts['resource_name'],
-                    self)
+                crunchlet.send_fetch(uri_opts['resource_name'], self)
 
         return found
 

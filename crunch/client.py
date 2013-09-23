@@ -1,10 +1,9 @@
-import functools
 import logging
 import socket
 import threading
-import time
 
 from tornado import ioloop, iostream
+
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -14,13 +13,14 @@ config = None
 request_pool = []
 io_loop = None
 
+
 class RequestConveyor(threading.Thread):
     """Thread that does rotation of requests in the request pool.
 
     Response for each request is written to the stream one piece (i.e. of
     length given by STREAM_LENGTH) at a time."""
 
-    def __init__(self, stream, request_pool, stream_length=4096*16):
+    def __init__(self, stream, request_pool, stream_length=4096*8):
         threading.Thread.__init__(self)
         self.request_pool = request_pool
         self.stream = stream
@@ -34,11 +34,11 @@ class RequestConveyor(threading.Thread):
                 finished = False
                 ts = request['ts']
                 response_content = request['response']
-
                 # write data into the stream one piece at a time
                 if len(response_content) >= STREAM_LENGTH:
                     resp_stream = response_content[:STREAM_LENGTH]
                     response_content = response_content[STREAM_LENGTH:]
+                    print len(response_content)
                 else:
                     resp_stream = response_content
                     response_content = ''
@@ -51,6 +51,7 @@ class RequestConveyor(threading.Thread):
 
                 globals()['send_data'](response)
                 #globals()['io_loop'].add_callback(callback)
+
 
                 if finished == True:
                     fin = 'FINISH {0}'.format(ts)
@@ -94,10 +95,10 @@ def on_ping():
 
 def on_fetch(args):
     """Handles a new incoming content request.
-    
-    Prepares the response string and insert a new request element into the 
+
+    Prepares the response string and insert a new request element into the
     request pool. The element contains the request id, and response string."""
-    
+
     ts = args[0]
     resource = args[1]
 
@@ -150,7 +151,7 @@ def read_next_command():
     # wait while buffer is being read
     while stream.reading() == True:
         continue
-    
+
     def onrecv(data):
         process_commands(data)
         read_next_command()
