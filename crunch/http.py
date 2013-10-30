@@ -1,6 +1,7 @@
 import re
 
 from gevent.event import AsyncResult
+import gevent
 
 
 class CrunchHttp():
@@ -32,6 +33,7 @@ class CrunchHttp():
         while self._finished == False:
             yield self.async_response.get()
             self.async_response = AsyncResult()
+            gevent.sleep(0)
 
     def build_headers(self, headers, status_code):
         if status_code == 200:

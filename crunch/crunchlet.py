@@ -1,8 +1,9 @@
 import logging
 import time
 
-import gevent
 from gevent import Greenlet
+import gevent
+
 
 """
 Crunch Protocol
@@ -42,9 +43,6 @@ class Crunchlet(Greenlet):
             gevent.sleep(0)
 
     def disconnect(self):
-        if not self.timeout == None:
-            self.io_loop.remove_timeout(self.timeout)
-
         if self.stream.closed() == False:
             self.send('DICONNECT')
 
@@ -81,9 +79,6 @@ class Crunchlet(Greenlet):
         return self.stream.closed()
 
     def send(self, string):
-        if self.ping_timeout:
-            self.ping_timeout.cancel()
-
         print '>> ' + string
         self.stream.write(string + self.delimiter)
 
@@ -94,10 +89,9 @@ class Crunchlet(Greenlet):
         if self.uid == None:
                 self.send_error('Not authenticated.')
         else:
-            print 'reading bytes'
-            bytes = self.stream.read_bytes(int(length) + len(self.delimiter))
-            self.process_request(ts, bytes[:-2])
-            print 'finished reading bytes'
+            if bytes:
+                bytes = self.stream.read_bytes(int(length) + len(self.delimiter))
+                self.process_request(ts, bytes[:-2])
 
     def on_ident(self, args):
         if len(args) < 2:
@@ -122,7 +116,6 @@ class Crunchlet(Greenlet):
         cmd = tokens[0]
         args = tokens[1:]
 
-        print cmd
         if cmd == 'IDENT':
             self.on_ident(args)
 
@@ -141,8 +134,6 @@ class Crunchlet(Greenlet):
 
     def process_request(self, ts, content):
         """Write the streamed data into an HTTP request."""
-        #content = content.replace(self.delimiter, '')
-        #print content
         if ts in self.http_queue:
             self.http_queue[ts].write_response(content, 200)
 
@@ -179,7 +170,7 @@ class CrunchStream(object):
                 self.buffer = self.buffer[ind + len(delimiter):]
                 return ret_val
 
-            bytes = self.socket.recv(1024)
+            bytes = self.socket.recv(8192)
 
             if not bytes:
                 return None
@@ -197,7 +188,7 @@ class CrunchStream(object):
                 self.buffer = self.buffer[num_bytes:]
                 return ret_val
 
-            bytes = self.socket.recv(1024)
+            bytes = self.socket.recv(8192)
 
             if not bytes:
                 return None

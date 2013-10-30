@@ -2,7 +2,6 @@ import os.path
 import sys
 
 import gevent
-from gevent.pool import Group
 from gevent.pywsgi import WSGIServer
 from gevent.server import StreamServer
 
@@ -13,7 +12,6 @@ from crunch.http import CrunchHttp
 from crunch.crunchlet import Crunchlet, CrunchStream
 
 
-global_group = Group()
 crunchpool = {}
 
 def init_crunch(crunchpool, crunch_port=8890, database_path='crunch.db'):
@@ -50,7 +48,8 @@ def init_http_server(http_port=8888, crunch_port=8890):
 
 
 def runserver(http_port=8888, crunch_port=8890):
-    gevent.joinall([gevent.spawn(init_http_server), gevent.spawn(init_crunch, crunchpool)])
+    gevent.joinall([gevent.spawn(init_http_server, http_port, crunch_port),
+                    gevent.spawn(init_crunch, crunchpool, crunch_port)])
 
 
 if __name__ == '__main__':
