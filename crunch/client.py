@@ -1,8 +1,7 @@
 import logging
-import socket
-import threading
 
-from tornado import ioloop, iostream
+from gevent import Greenlet, socket
+import gevent
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -14,19 +13,19 @@ request_pool = []
 io_loop = None
 
 
-class RequestConveyor(threading.Thread):
+class RequestConveyor(Greenlet):
     """Thread that does rotation of requests in the request pool.
 
     Response for each request is written to the stream one piece (i.e. of
     length given by STREAM_LENGTH) at a time."""
 
-    def __init__(self, stream, request_pool, stream_length=4096*8):
-        threading.Thread.__init__(self)
+    def __init__(self, stream, request_pool, stream_length=8192):
+        Greenlet.__init__(self)
         self.request_pool = request_pool
         self.stream = stream
         self.stream_length = stream_length
 
-    def run(self):
+    def _run(self):
         STREAM_LENGTH = self.stream_length
 
         while True:
@@ -38,7 +37,6 @@ class RequestConveyor(threading.Thread):
                 if len(response_content) >= STREAM_LENGTH:
                     resp_stream = response_content[:STREAM_LENGTH]
                     response_content = response_content[STREAM_LENGTH:]
-                    print len(response_content)
                 else:
                     resp_stream = response_content
                     response_content = ''
@@ -48,15 +46,20 @@ class RequestConveyor(threading.Thread):
                 request['response'] = response_content
                 response = 'CONTENT {0} {1}{2}{3}'.format(
                     ts, len(resp_stream), delimiter, resp_stream)
-
-                globals()['send_data'](response)
+                send_data(response)
+                print 'sent'
+                #callback = functools.partial(send_data, response)
                 #globals()['io_loop'].add_callback(callback)
 
 
                 if finished == True:
                     fin = 'FINISH {0}'.format(ts)
                     #callback = functools.partial(send_data, fin)
-                    globals()['send_data'](fin)
+                    print 'finishing'
+                    #globals()['io_loop'].add_callback(callback)
+                    send_data(fin)
+
+            gevent.sleep(0)
 
     def stop(self):
         self.quit = True
@@ -77,21 +80,22 @@ def build_headers(headers, status_code=200):
 
     return header_string
 
-def send_data(content):
-    while stream.writing() == True:
-        continue
 
-    stream.write(content + delimiter)
+def send_data(content):
+    return stream.write(content + delimiter)
 
 def on_unrecognized(cmd):
     logging.info('Unrecognized command. %s' % cmd)
 
+
 def on_ack():
     logging.info('Incoming ACK.')
+
 
 def on_ping():
     logging.info('Incoming PING. Sending sPONG.')
     stream.write('PONG')
+
 
 def on_fetch(args):
     """Handles a new incoming content request.
@@ -119,9 +123,11 @@ def on_fetch(args):
     response_content = content
     request_pool.append({'response': response_content, 'ts': ts})
 
+
 def authenticate():
     stream.write('IDENT {0} {1}{2}'.format(config['username'],
-        config['password'], delimiter), read_next_command)
+        config['password'], delimiter))
+
 
 def process_commands(data):
     tokens = data.replace(delimiter, '').split(' ')
@@ -143,44 +149,101 @@ def process_commands(data):
     else:
         on_unrecognized(cmd)
 
+
 def read_next_command():
+    global delimiter
+    global stream
+
     if stream.closed():
         logging.error('Stream closed while reading command line.')
         return False
 
-    # wait while buffer is being read
-    while stream.reading() == True:
-        continue
+    cmd_line = stream.read_until(delimiter)
+    if cmd_line:
+        print 'broke'
 
-    def onrecv(data):
-        process_commands(data)
+    print 'finished reading command'
+    return process_commands(cmd_line)
+
+
+class CrunchStream(object):
+    def __init__(self, socket):
+        self.socket = socket
+        self.buffer = ''
+
+    def write(self, data):
+        #select.select([], [self.socket], [])
+        data_size = len(data)
+        sent_bytes = 0
+
+        while sent_bytes < data_size:
+            sent = self.socket.send(data)
+            sent_bytes += sent
+            data = data[sent:]
+
+    def push_to_buffer(self, bytes):
+        self.buffer += bytes
+
+    def read_until(self, delimiter):
+        while True:
+            if delimiter in self.buffer:
+                ind = self.buffer.index(delimiter)
+                ret_val = self.buffer[:ind]
+                self.buffer = self.buffer[ind + len(delimiter):]
+                return ret_val
+
+            bytes = self.socket.recv(8192)
+
+            if not bytes:
+                return None
+
+            self.buffer += bytes
+
+    def closed(self):
+        return False
+
+    def read_bytes(self, num_bytes):
+        n_bytes = len(self.buffer)
+        while True:
+            if n_bytes >= num_bytes:
+                ret_val = self.buffer[:num_bytes]
+                self.buffer = self.buffer[num_bytes:]
+                return ret_val
+
+            bytes = self.socket.recv(8192)
+
+            if not bytes:
+                return None
+
+            self.buffer += bytes
+            n_bytes += len(bytes)
+
+
+def start_reactor():
+    while True:
         read_next_command()
-
-    stream.read_until(delimiter, onrecv)
+        gevent.sleep(0)
 
 def start_client(conf):
     global stream
-    global config
-    global io_loop
 
     config = conf
 
-    # Initialize the IOLoop
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
-    stream = iostream.IOStream(s)
-    stream.connect((conf['address'], conf['port']), authenticate)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    s.connect((config['address'], config['port']))
+    stream = CrunchStream(s)
+    authenticate()
 
     # Create a RequestConveyor instance
-    rc = RequestConveyor(stream, globals()['request_pool'])
-    rc.daemon = True
+    rc = RequestConveyor(stream, request_pool)
     rc.start()
+    gevent.joinall([gevent.spawn(start_reactor), rc])
 
-    io_loop = ioloop.IOLoop.instance()
-    io_loop.start()
 
 if __name__ == '__main__':
-    config = {'port': 8890,
-              'address': 'localhost',
+    config = {'port': 8080,
+              'address': '192.241.244.33',
               'username': 'dash1291',
               'password': 'locker'}
     start_client(config)
